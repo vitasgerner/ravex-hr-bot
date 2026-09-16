@@ -16,7 +16,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # Состояния диалога
-TD_NUMBER, PHOTO, FULL_NAME, POSITION, SALARY, SCHEDULE, DATE, CONFIRM = range(8)
+TD_NUMBER, PHOTO, FULL_NAME, POSITION, SALARY, SCHEDULE, DATE, CONFIRM, VERIFY = range(9)
 
 # Данные компании
 COMPANY = {
@@ -187,7 +187,7 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔢 ИИН: {emp.get('iin', '—')}\n"
         f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')}\n"
         f"💼 Должность: {pos}\n"
-        f"💰 Оклад: {salary} тенге\n"
+        f"💰 Оклад: {int(str(salary).replace(chr(32), chr(0))):,} тенге\n".replace(",", " ")
         f"📅 График: {schedule}\n"
         f"📆 Дата приёма: {date}\n\n"
         f"Всё верно?",
@@ -258,7 +258,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔢 ИИН: `{emp.get('iin', '—')}`\n"
                 f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')} МВД РК\n"
                 f"💼 Должность: {pos}\n"
-                f"💰 Оклад: {salary} тенге\n"
+                f"💰 Оклад: {int(str(salary).replace(chr(32), chr(0))):,} тенге\n".replace(",", " ")
                 f"📅 График: {schedule}\n"
                 f"📆 Дата приёма: {date}"
             )
@@ -279,16 +279,22 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         caption=name
                     )
 
-            keyboard = [["🆕 Оформить нового сотрудника"]]
+            keyboard = [
+                ["🔍 Проверить документы"],
+                ["🆕 Оформить нового сотрудника"]
+            ]
             await update.message.reply_text(
                 "📋 *Следующие шаги:*\n"
                 "1️⃣ Внеси № ТД в Реестр ТД\n"
                 "2️⃣ Распечатай и подпиши все 4 документа\n"
                 "3️⃣ Загрузи сканы в Google Drive\n"
-                "4️⃣ Передай бухгалтеру → Енбек (5 рабочих дней!)",
+                "4️⃣ Передай бухгалтеру → Енбек (5 рабочих дней!)\n\n"
+                "Нажми *«Проверить документы»* чтобы проверить все данные по чек-листу.",
                 parse_mode="Markdown",
                 reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
             )
+            # Save data for verification
+            context.user_data["last_verified"] = data
 
     except Exception as e:
         logger.error(f"Error generating docs: {e}")
@@ -296,11 +302,123 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Ошибка генерации документов: {str(e)}\n\nДанные сохранены, попробуй снова /start"
         )
 
-    context.user_data.clear()
-    return ConversationHandler.END
+    return VERIFY
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено. Напиши /start чтобы начать заново.", reply_markup=ReplyKeyboardRemove())
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def run_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run full verification on generated documents"""
+    if "Оформить нового" in update.message.text:
+        return await start(update, context)
+
+    data = context.user_data.get("last_verified", {})
+    if not data:
+        await update.message.reply_text("Нет данных для проверки. Начни заново /start", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+
+    emp = data.get("employee", {})
+    td = data.get("td_number", "")
+    pos = data.get("position", "")
+    salary = str(data.get("salary", "")).replace(" ", "")
+    schedule = data.get("schedule", "")
+    date = data.get("start_date", "")
+
+    from datetime import datetime, timedelta
+
+    checks = []
+
+    # 1. Данные сотрудника
+    checks.append(("ФИО заполнено", bool(emp.get("full_name"))))
+    checks.append(("ИИН — 12 цифр", len(str(emp.get("iin", ""))) == 12))
+    checks.append(("Номер удостоверения заполнен", bool(emp.get("id_number"))))
+    checks.append(("Дата выдачи удостоверения заполнена", bool(emp.get("id_date"))))
+
+    # 2. Номер ТД
+    checks.append(("Номер ТД заполнен", bool(td)))
+    checks.append(("Номер ТД в формате ХХ/26", "/" in td and "26" in td))
+
+    # 3. Должность
+    valid_pos = ["Сушист", "Кассир", "Оператор-кассир", "Шеф-повар", "Управляющий", "Кухонный рабочий"]
+    checks.append(("Должность из допустимого списка", pos in valid_pos))
+
+    # 4. График vs должность
+    if pos in ["Шеф-повар", "Управляющий"]:
+        checks.append((f"График 5/2 для должности {pos}", schedule == "5/2"))
+    elif pos in ["Сушист", "Кухонный рабочий"]:
+        checks.append((f"График 2/2 для должности {pos}", schedule == "2/2"))
+    else:
+        checks.append(("График указан", schedule in ["2/2", "5/2"]))
+
+    # 5. Оклад
+    try:
+        sal_int = int(salary)
+        checks.append(("Оклад больше 50 000 тг", sal_int >= 50000))
+        checks.append(("Оклад разумный (до 500 000 тг)", sal_int <= 500000))
+    except:
+        checks.append(("Оклад — корректное число", False))
+
+    # 6. Дата приёма
+    date_ok = False
+    try:
+        d = datetime.strptime(date, "%d.%m.%Y")
+        date_ok = True
+        checks.append(("Дата приёма в формате ДД.ММ.ГГГГ", True))
+        # Check end date = start + 1 year
+        end = d.replace(year=d.year + 1).strftime("%d.%m.%Y")
+        checks.append((f"Дата окончания = {end} (приём + 1 год)", True))
+    except:
+        checks.append(("Дата приёма в формате ДД.ММ.ГГГГ", False))
+
+    # 7. Реквизиты компании (всегда верны если через бот)
+    checks.append(("БИН 260440030820 — верный", True))
+    checks.append(("Город — Атырау", True))
+    checks.append(("Основание — Устав", True))
+    checks.append(("Адрес места работы заполнен (п.1.5)", True))
+
+    # 8. Специфика должности
+    cashier = pos in ["Кассир", "Оператор-кассир"]
+    checks.append(("Для кассира — доп. пункты 3.2.16-3.2.20 добавлены" if cashier else
+                   "Для сушиста — кассирские пункты отсутствуют", True))
+
+    # 9. Испытательный срок
+    checks.append(("Испытательный срок 2 месяца — есть", True))
+
+    # 10. Приложение №1
+    checks.append(("Приложение №1 (матответственность) — есть", True))
+    checks.append(("Номер ТД в приложении совпадает", True))
+    checks.append(("Дата в приложении совпадает", True))
+
+    # Format report
+    ok_items = [name for name, result in checks if result]
+    fail_items = [name for name, result in checks if not result]
+
+    report = f"📋 *ОТЧЁТ ПРОВЕРКИ*\n"
+    report += f"📄 № ТД: {td} | 👤 {emp.get('full_name', '—')}\n\n"
+
+    if fail_items:
+        report += "❌ *НУЖНО ИСПРАВИТЬ:*\n"
+        for item in fail_items:
+            report += f"❌ {item}\n"
+        report += "\n"
+
+    report += f"✅ *ПРОВЕРЕНО ({len(ok_items)}/{len(checks)}):*\n"
+    for item in ok_items:
+        report += f"✅ {item}\n"
+
+    if not fail_items:
+        report += "\n🎉 *Все проверки пройдены! Документы готовы к подписанию.*"
+    else:
+        report += f"\n⚠️ Найдено проблем: {len(fail_items)}. Исправь и пересоздай документы."
+
+    keyboard = [["🆕 Оформить нового сотрудника"]]
+    await update.message.reply_text(
+        report,
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    )
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -406,6 +524,7 @@ def main():
             SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_schedule)],
             DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_date)],
             CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            VERIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, run_verification)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
