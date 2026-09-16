@@ -139,6 +139,12 @@ async def get_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     salary = update.message.text.strip().replace(" ", "")
+    if salary == "Другой":
+        await update.message.reply_text(
+            "Введи сумму оклада в тенге (только цифры, например: 95000):",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return SALARY
     context.user_data["salary"] = salary
     keyboard = [["2/2", "5/2"]]
     await update.message.reply_text(
@@ -201,25 +207,70 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     schedule = context.user_data.get("schedule", "—")
     date = context.user_data.get("start_date", "—")
 
-    summary = (
-        f"✅ *Данные сохранены!*\n\n"
-        f"📄 № ТД: *{td}*\n"
-        f"👤 *{emp.get('full_name', '—')}*\n"
-        f"🔢 ИИН: `{emp.get('iin', '—')}`\n"
-        f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')} МВД РК\n"
-        f"💼 Должность: {pos}\n"
-        f"💰 Оклад: {salary} тенге\n"
-        f"📅 График: {schedule}\n"
-        f"📆 Дата приёма: {date}\n\n"
-        f"📋 *Следующие шаги:*\n"
-        f"1️⃣ Внеси № ТД в Реестр\n"
-        f"2️⃣ Создай 4 документа\n"
-        f"3️⃣ Распечатай и подпиши\n"
-        f"4️⃣ Загрузи в Google Drive\n"
-        f"5️⃣ Передай бухгалтеру → Енбек (5 рабочих дней!)"
+    await update.message.reply_text(
+        "⏳ Генерирую документы, подожди...",
+        reply_markup=ReplyKeyboardRemove()
     )
 
-    await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+    try:
+        from generate_docs import generate_all_docs
+        import tempfile
+
+        data = {
+            "td_number": td,
+            "employee": emp,
+            "position": pos,
+            "salary": str(salary).replace(" ", ""),
+            "schedule": schedule,
+            "start_date": date,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = generate_all_docs(data, tmpdir)
+
+            summary = (
+                f"✅ *Документы готовы!*\n\n"
+                f"📄 № ТД: *{td}*\n"
+                f"👤 *{emp.get('full_name', '—')}*\n"
+                f"🔢 ИИН: `{emp.get('iin', '—')}`\n"
+                f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')} МВД РК\n"
+                f"💼 Должность: {pos}\n"
+                f"💰 Оклад: {salary} тенге\n"
+                f"📅 График: {schedule}\n"
+                f"📆 Дата приёма: {date}"
+            )
+            await update.message.reply_text(summary, parse_mode="Markdown")
+
+            # Send all 4 PDFs
+            doc_names = {
+                'td': '📋 Трудовой договор',
+                'prikaz': '📝 Приказ о приёме',
+                'zayavlenie': '✍️ Заявление на приём',
+                'ipn': '💰 Заявление ИПН',
+            }
+            for key, name in doc_names.items():
+                with open(paths[key], 'rb') as f:
+                    await update.message.reply_document(
+                        document=f,
+                        filename=paths[key].split('/')[-1],
+                        caption=name
+                    )
+
+            await update.message.reply_text(
+                "📋 *Следующие шаги:*\n"
+                "1️⃣ Внеси № ТД в Реестр ТД\n"
+                "2️⃣ Распечатай и подпиши все 4 документа\n"
+                "3️⃣ Загрузи сканы в Google Drive\n"
+                "4️⃣ Передай бухгалтеру → Енбек (5 рабочих дней!)",
+                parse_mode="Markdown"
+            )
+
+    except Exception as e:
+        logger.error(f"Error generating docs: {e}")
+        await update.message.reply_text(
+            f"❌ Ошибка генерации документов: {str(e)}\n\nДанные сохранены, попробуй снова /start"
+        )
+
     context.user_data.clear()
     return ConversationHandler.END
 
