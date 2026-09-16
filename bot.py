@@ -256,13 +256,15 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         caption=name
                     )
 
+            keyboard = [["🆕 Оформить нового сотрудника"]]
             await update.message.reply_text(
                 "📋 *Следующие шаги:*\n"
                 "1️⃣ Внеси № ТД в Реестр ТД\n"
                 "2️⃣ Распечатай и подпиши все 4 документа\n"
                 "3️⃣ Загрузи сканы в Google Drive\n"
                 "4️⃣ Передай бухгалтеру → Енбек (5 рабочих дней!)",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
             )
 
     except Exception as e:
@@ -281,8 +283,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    async def new_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await start(update, context)
+
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🆕 Оформить нового сотрудника$"), start),
+        ],
         states={
             TD_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_td_number)],
             PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
