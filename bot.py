@@ -207,9 +207,32 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     schedule = context.user_data.get("schedule", "—")
     date = context.user_data.get("start_date", "—")
 
+    # Run verification first
+    ok_items, issues = verify_documents({
+        "td_number": td,
+        "employee": emp,
+        "position": pos,
+        "salary": str(salary).replace(" ", ""),
+        "schedule": schedule,
+        "start_date": date,
+    })
+
+    if issues:
+        issues_text = "\n".join(issues)
+        ok_text = "\n".join(ok_items)
+        await update.message.reply_text(
+            f"⚠️ *Найдены проблемы:*\n{issues_text}\n\n"
+            f"*Что верно:*\n{ok_text}\n\n"
+            f"Исправь данные и попробуй снова /start",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
     await update.message.reply_text(
-        "⏳ Генерирую документы, подожди...",
-        reply_markup=ReplyKeyboardRemove()
+        f"✅ *Проверка пройдена!*\n" + "\n".join(ok_items) + "\n\n⏳ Генерирую документы...",
+        parse_mode="Markdown"
     )
 
     try:
@@ -280,6 +303,89 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено. Напиши /start чтобы начать заново.", reply_markup=ReplyKeyboardRemove())
     context.user_data.clear()
     return ConversationHandler.END
+
+def verify_documents(data):
+    """Check all document data and return list of issues"""
+    issues = []
+    ok = []
+
+    emp = data.get("employee", {})
+    td = data.get("td_number", "")
+    pos = data.get("position", "")
+    salary = str(data.get("salary", "")).replace(" ", "")
+    schedule = data.get("schedule", "")
+    date = data.get("start_date", "")
+
+    # 1. Данные сотрудника
+    if not emp.get("full_name"):
+        issues.append("❌ ФИО не заполнено")
+    else:
+        ok.append("✅ ФИО заполнено")
+
+    if not emp.get("iin") or len(str(emp.get("iin", ""))) != 12:
+        issues.append("❌ ИИН должен быть 12 цифр")
+    else:
+        ok.append("✅ ИИН верный (12 цифр)")
+
+    if not emp.get("id_number"):
+        issues.append("❌ Номер удостоверения не заполнен")
+    else:
+        ok.append("✅ Номер удостоверения заполнен")
+
+    if not emp.get("id_date"):
+        issues.append("❌ Дата выдачи удостоверения не заполнена")
+    else:
+        ok.append("✅ Дата выдачи удостоверения заполнена")
+
+    # 2. Номер ТД
+    if not td:
+        issues.append("❌ Номер ТД не заполнен")
+    elif "/" not in td:
+        issues.append("❌ Номер ТД должен быть в формате 09/26")
+    else:
+        ok.append(f"✅ Номер ТД: {td}")
+
+    # 3. Должность
+    valid_positions = ["Сушист", "Кассир", "Оператор-кассир", "Шеф-повар", "Управляющий", "Кухонный рабочий"]
+    if pos not in valid_positions:
+        issues.append(f"❌ Должность '{pos}' не из списка")
+    else:
+        ok.append(f"✅ Должность: {pos}")
+
+    # 4. Оклад
+    try:
+        sal_int = int(salary)
+        if sal_int < 50000:
+            issues.append(f"⚠️ Оклад {sal_int} тг — кажется слишком маленьким")
+        else:
+            ok.append(f"✅ Оклад: {sal_int:,} тг".replace(",", " "))
+    except:
+        issues.append(f"❌ Оклад '{salary}' — неверный формат")
+
+    # 5. График
+    if schedule not in ["2/2", "5/2"]:
+        issues.append(f"❌ График '{schedule}' — должен быть 2/2 или 5/2")
+    else:
+        ok.append(f"✅ График: {schedule}")
+
+    # 6. График vs должность
+    if pos in ["Шеф-повар", "Управляющий"] and schedule == "2/2":
+        issues.append(f"⚠️ Для должности '{pos}' обычно используется график 5/2")
+    if pos in ["Кассир", "Оператор-кассир"] and schedule not in ["2/2", "5/2"]:
+        issues.append(f"⚠️ Проверь график для кассира")
+
+    # 7. Дата
+    if not date:
+        issues.append("❌ Дата приёма не заполнена")
+    else:
+        try:
+            from datetime import datetime
+            d = datetime.strptime(date, "%d.%m.%Y")
+            ok.append(f"✅ Дата приёма: {date}")
+        except:
+            issues.append(f"❌ Дата '{date}' — неверный формат (нужно ДД.ММ.ГГГГ)")
+
+    return ok, issues
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
