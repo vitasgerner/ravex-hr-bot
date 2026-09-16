@@ -187,7 +187,7 @@ async def get_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔢 ИИН: {emp.get('iin', '—')}\n"
         f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')}\n"
         f"💼 Должность: {pos}\n"
-        f"💰 Оклад: {int(str(salary).replace(chr(32), chr(0))):,} тенге\n".replace(",", " ")
+        f"💰 Оклад: {salary} тенге\\n"
         f"📅 График: {schedule}\n"
         f"📆 Дата приёма: {date}\n\n"
         f"Всё верно?",
@@ -258,7 +258,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔢 ИИН: `{emp.get('iin', '—')}`\n"
                 f"📄 Уд. №{emp.get('id_number', '—')} от {emp.get('id_date', '—')} МВД РК\n"
                 f"💼 Должность: {pos}\n"
-                f"💰 Оклад: {int(str(salary).replace(chr(32), chr(0))):,} тенге\n".replace(",", " ")
+                f"💰 Оклад: {salary} тенге\n"
                 f"📅 График: {schedule}\n"
                 f"📆 Дата приёма: {date}"
             )
