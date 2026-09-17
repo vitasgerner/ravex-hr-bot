@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-ALLOWED_USERS = [1357240248, 5877382242]  # Виталий, Управляющий
+ALLOWED_USERS = [1357240248, 5877382242, 1022447332]  # Виталий, Управляющий, Доп.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
