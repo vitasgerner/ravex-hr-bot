@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+ALLOWED_USERS = [1357240248, 5877382242]  # Виталий, Управляющий
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -33,6 +34,9 @@ POSITIONS = [
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ALLOWED_USERS:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return ConversationHandler.END
     context.user_data.clear()
     await update.message.reply_text(
         "👋 Привет! Я HR-бот RAVEX FOOD GROUP.\n"
